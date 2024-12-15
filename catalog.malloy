@@ -1,0 +1,328 @@
+##! experimental.parameters
+
+source: catalog_raw is duckdb.table('catalog.json')
+
+source: only_skips(max_skip is 4) is catalog_raw extend {
+  where: skip != null
+  where: skip <= max_skip
+}
+
+source: filter_skips(max_skip is 4) is catalog_raw extend {
+  where: skip = null or skip <= max_skip
+}
+
+# dashboard
+query: check_skips is only_skips(max_skip is 3) -> {
+  aggregate: total_cost is cost.sum() {
+    where: status != "Ordered"
+    where: status != "Catalogged"
+  }
+  aggregate: cost_excluding_megas is cost.sum() {
+    where: status != "Ordered"
+    where: status != "Catalogged"
+    where: form !~ "Mega%"
+  }
+  nest: needed is {
+    where: status != "Ordered"
+    where: status != "Catalogged"
+    group_by: name, form, status, 
+      # currency
+      cost, binder_order, skip
+      # link
+      card_url
+      # image { width="30px" }
+      image_url
+    order_by: binder_order asc
+    limit: 1000
+  }
+  nest: cheapest is {
+    where: status != "Ordered"
+    where: status != "Catalogged"
+    group_by: name, form, status, 
+      # currency
+      cost, binder_order, skip
+      # link
+      card_url
+      # image { width="30px" }
+      image_url
+    order_by: cost asc
+    limit: 10
+  }
+  nest: most_expensive is {
+    where: status != "Ordered"
+    where: status != "Catalogged"
+    group_by: name, form, status, 
+      # currency
+      cost, binder_order, skip
+      # link
+      card_url
+      # image { width="30px" }
+      image_url
+    order_by: cost desc
+    limit: 10
+  }
+  nest: not_costed is {
+    where: status != "Ordered"
+    where: status != "Catalogged"
+    group_by: name, form, status, 
+      # currency
+      cost, binder_order, skip
+      # link
+      card_url
+      # image { width="30px" }
+      image_url
+    where: cost = null
+    limit: 10
+  }
+  nest: have_or_ordered is {
+    where: status = "Ordered" or status = "Catalogged"
+    group_by: name, form, status, 
+      # currency
+      cost, binder_order, skip
+      # link
+      card_url
+      # image { width="30px" }
+      image_url
+    order_by: binder_order asc
+    limit: 1000
+  }
+}
+
+source: catalog(max_skip is 3) is filter_skips(max_skip) extend {
+  # image { width=200px }
+  dimension: image is image_url
+  # image { width=100px }
+  dimension: small_image is image_url
+  where: obtainable ?? true
+
+  view: lost_cards is {
+    where: starts_with(status, "Lost") or starts_with(status, "Late")
+    # dashboard
+    nest: losts is {
+      group_by: status
+      # list
+      nest: x is {
+        group_by: name, binder_order
+      }
+      aggregate: c is count()
+      nest: re_buy is {
+        group_by: name, binder_order
+        # link
+        group_by: card_url
+      }
+    }
+  }
+}
+
+run: catalog -> {
+  group_by: 
+    national_dex_number
+    name
+    image
+}
+
+run: catalog -> {
+  group_by: 
+    national_dex_number
+    name
+    status
+    image
+  calculate: is_duplicate is lag(name) = name
+} -> {
+  select: *
+  where: is_duplicate
+}
+
+run: catalog -> {
+  group_by: name, binder_order, small_image
+  order_by: binder_order
+}
+
+query: gen_binder_number is catalog(max_skip is 3) -> {
+  group_by: 
+    name
+    binder_order 
+    hide_duplicate
+    image_url
+    card_url
+    obtainable
+    status
+    form
+    want_card
+    cost
+    national_dex_number
+  nest: want_cards is {
+    group_by: want_cards.want_card, want_cards.want_level, want_cards.cost, want_cards.image_url
+  }
+    
+  where: not hide_duplicate
+  order_by: binder_order
+  calculate: binder_number is rank()
+}
+
+source: binder_numbered is gen_binder_number extend {
+  dimension: page_number is floor((binder_number - 1) / 9) + 1
+  dimension: row_number is floor(((binder_number - 1) / 3) % 3) + 1
+  dimension: column_number is ((binder_number - 1) % 3) + 1
+
+  # image { width=80px } 
+  dimension: small_image is image_url
+
+  view: binder_image is {
+    # hidden 
+    group_by: name
+    # image { width=80px alt.field="name" } 
+    group_by: image_url is image_url
+  }
+
+  view: x is {
+    group_by: 
+      binder_number
+      page_number
+      row_number
+      column_number
+    order_by: binder_number
+  }
+
+  view: pages is {
+    group_by: page_number
+    order_by: page_number
+    limit: 300
+    nest: page is {
+      # hidden
+      group_by: 
+        row_number 
+      order_by: row_number
+      nest: column is {
+        nest: col1 is binder_image + { where: column_number = 1 }
+        nest: col2 is binder_image + { where: column_number = 2 }
+        nest: col3 is binder_image + { where: column_number = 3 }
+      }
+    }
+  }
+
+  view: binder_image_if_catalogged is {
+    # hidden 
+    group_by: name
+    # image { width=80px alt.field="name" } 
+    group_by: image_url is pick image_url when is_catalogged else null
+  }
+
+  view: pages_only_catalogged is {
+    group_by: page_number
+    order_by: page_number
+    limit: 300
+    nest: page is {
+      # hidden
+      group_by: 
+        row_number 
+      order_by: row_number
+      nest: column is {
+        nest: col1 is binder_image_if_catalogged + { where: column_number = 1 }
+        nest: col2 is binder_image_if_catalogged + { where: column_number = 2 }
+        nest: col3 is binder_image_if_catalogged + { where: column_number = 3 }
+      }
+    }
+  }
+
+  dimension: 
+    is_catalogged is status = 'Catalogged'
+    is_ordered is status = 'Ordered'
+    is_ordered_or_catalogged is is_ordered or is_catalogged
+
+  measure: 
+    catalogged_count is count() { where: is_catalogged }
+    ordered_count is count() { where: is_ordered }
+    ordered_or_catalogged_count is count() { where: is_ordered_or_catalogged }
+
+    total_count is count()
+
+  # percent
+  measure:
+    catalogged_progress is catalogged_count / total_count
+    ordered_or_catalogged_progress is ordered_or_catalogged_count / total_count
+  
+  # dashboard
+  view: progress is {
+    aggregate: 
+      catalogged_count, catalogged_progress,
+      # break
+      ordered_count, ordered_or_catalogged_progress,
+      # break
+      total_count
+  }
+
+  view: todo is {
+    group_by: 
+      name
+    where: not (is_catalogged or is_ordered)
+  }
+
+  dimension: 
+    has_image is image_url != null and image_url != ""
+    has_card_url is card_url != null and card_url != ""
+    name_and_form is concat(name, pick concat(" (", form, ")") when form != null else "")
+    is_obtainable is obtainable ?? true
+
+    search_url is 
+      pick 
+        concat("https://pkmncards.com/?s=", "\"M ", name, "\"", "&sort=price-market&ord=rev&display=images")
+        when form = "Mega"
+      pick 
+        concat("https://pkmncards.com/?s=", "\"", name, " VMAX\"", "&sort=price-market&ord=rev&display=images")
+        when form = "Gigantamax"
+      else concat(
+        "https://pkmncards.com/?s=",
+        name,
+        pick 
+          concat(" ", regexp_extract!(image_url, r'(_|-)0*([1-9]\d*)', 2))
+          when image_url != null
+        else ""
+      )
+
+  view: card_url_todo is {
+    group_by: 
+      name_and_form, binder_number, 
+      # link
+      search_url
+    where: not has_card_url
+    limit: 3000
+    order_by: binder_number asc
+  }
+
+  view: buy_gigantamax is {
+    # currency
+    aggregate: total_cost is cost.sum()
+    where: form = ("Gigantamax" | "Eternamax") and is_obtainable
+    nest: buy_list is {
+      group_by: 
+        name_and_form
+        small_image
+        # link
+        card_url
+        # currency
+        cost
+      order_by: cost asc
+      limit: 1000
+    }
+  }
+
+  view: want_card_list is {
+    group_by: name_and_form
+    # hidden
+    group_by: binder_order
+    where: want_cards.want_card != null
+    group_by: 
+      # image { width="150px" }
+      want_cards.image_url
+      # currency
+      want_cards.cost
+      want_cards.want_level
+      # link
+      want_cards.want_card
+    order_by: 
+      want_level desc,
+      cost asc
+  }
+}
+
