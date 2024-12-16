@@ -2054,6 +2054,14 @@
     "binder_order": 145,
     "name": "Zapdos",
     "status": "Catalogged",
+    "want_cards": [
+      {
+        "want_card": "https://pkmncards.com/card/zapdos-ex-151-mew-202/",
+        "want_level": 10,
+        "cost": 56,
+        "image_url": "https://pkmncards.com/wp-content/uploads/sv3-5_en_202_std.jpg"
+      }
+    ],
     "card_url": "https://pkmncards.com/card/zapdos-twilight-masquerade-twm-065/",
     "image_url": "https://pkmncards.com/wp-content/uploads/sv6_en_065_std.jpg"
   },
